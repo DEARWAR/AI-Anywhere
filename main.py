@@ -146,6 +146,12 @@ def process_text(request: TextRequest):
                 prompt = f"Task: Rewrite to sound like a friendly text message to a friend.\nNow do this: '{original_text}'"
             elif command == "reply":
                 prompt = f"Task: Write a natural 1-sentence reply to this message. Do not invent times/dates.\nNow reply to this: '{original_text}'"
+            elif command in ["ask", "ans"]:
+                prompt = f"Task: Provide a direct, factual answer to this question. No conversational filler.\nQuestion: '{original_text}'"
+            elif command == "expand":
+                prompt = f"Task: Expand this into EXACTLY 2-3 natural sentences without inventing fake facts.\nText: '{original_text}'"
+            elif command == "bullet":
+                prompt = f"Task: Convert to a clean bulleted list.\nText: '{original_text}'"
             elif command == "summ":
                 prompt = f"Task: Summarize this in 1 short sentence. Keep it in the exact same language.\nText: '{original_text}'"
             elif command == "emoji":
