@@ -16,6 +16,10 @@ def keep_awake():
 
 # ... (Baaki aapka puraana code iske neeche rahega)
 
+@app.get("/keep_awake")
+async def keep_awake():
+    return {"status": "AI Anywhere Server is Awake!"}
+
 # ⚠️ Apni API key zaroor daalein ⚠️
 API_KEY = "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" 
 client = Groq(api_key=API_KEY)
