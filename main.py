@@ -21,7 +21,7 @@ async def keep_awake():
     return {"status": "AI Anywhere Server is Awake!"}
 
 # ⚠️ Apni API key zaroor daalein ⚠️
-API_KEY = "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" 
+API_KEY = "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" 
 client = Groq(api_key=API_KEY)
 
 # ==========================================
