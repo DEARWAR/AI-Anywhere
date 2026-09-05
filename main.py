@@ -434,30 +434,32 @@ def build_task(command, text, custom_prompt="", language=None, tone=None):
         task = f"CUSTOM COMMAND:\n{custom_prompt.strip()}\n\nApply this instruction to the current text and conversation."
     else:
         tasks = {
-            "reply": "Write the most natural reply to the current message. Understand the conversation before replying. Respond as the user would naturally respond.",
-            "fix": "Correct grammar, spelling and punctuation. Preserve meaning.",
-            "translate": "Translate into natural English. Preserve meaning and tone.",
-            "hindi": "Translate into natural everyday Hindi using Devanagari only.",
-            "hinglish": "Translate into natural conversational Hinglish using Roman script only.",
-            "formal": "Rewrite as natural professional communication. Preserve intent.",
-            "polite": "Rewrite respectfully and politely while preserving the actual request.",
-            "casual": "Rewrite as natural casual conversation.",
-            "improve": "Improve clarity and naturalness without changing meaning.",
-            "short": "Make the message shorter while preserving important meaning.",
-            "expand": "Expand naturally without inventing facts.",
+            "reply": "Write a natural reply to the message. STRICT RULE: Reply in the EXACT same language and script as the input. Output ONLY the reply.",
+            "fix": "Correct grammar, spelling, and punctuation. STRICT RULE: You MUST keep the text in the EXACT same language and script. If it's Hinglish (Hindi written in English alphabet), keep it Hinglish. DO NOT translate to Hindi or English. Output ONLY the fixed text.",
+            "translate": "Translate the text directly into the target language. Output ONLY the translation without any conversational filler or notes.",
+            "hindi": "Translate into natural everyday Hindi using Devanagari script ONLY. Output ONLY the translation.",
+            "hinglish": "Translate into natural conversational Hinglish (Hindi words written in the English alphabet) ONLY. Output ONLY the translation.",
+            "formal": "Rewrite as natural professional communication. STRICT RULE: Keep it in the exact same language and script as the input.",
+            "polite": "Rewrite respectfully and politely while preserving the actual request and language.",
+            "casual": "Rewrite as natural casual conversation. Preserve the original language and script.",
+            "improve": "Improve clarity and naturalness without changing the meaning or translating.",
+            "short": "Make the message shorter while preserving important meaning and the original language.",
+            "expand": "Expand naturally without inventing facts. Keep the original language.",
             "bullet": "Convert into clean useful bullet points without adding information.",
             "summarize": "Summarize concisely while preserving important meaning.",
-            "simple": "Rewrite in simpler language without changing meaning.",
-            "ask": "Provide a direct, factual answer to this question. No conversational filler.\nQuestion",
-            "emoji": "Add appropriate emojis without changing the intended meaning.",
-            "rewrite": "Rephrase naturally without changing facts, intent or tone.",
+            "simple": "Rewrite in simpler language without changing meaning or language.",
+            "ask": "Solve or answer the question provided. STRICT RULE: Give ONLY the direct final answer or solution. DO NOT repeat, rephrase, or translate the question. No conversational filler.",
+            "emoji": "Add appropriate emojis without changing the intended meaning or language.",
+            "rewrite": "Rephrase naturally without changing facts, intent, tone, or language.",
         }
         task = tasks.get(command, f'Apply the custom text operation "{command}" naturally.')
 
-    language_text = language or "Automatically match the conversation language unless the command specifies a target language."
+    # 🚀 NAYA: Language fallback ko bohot strict kar diya hai
+    language_text = language or "CRITICAL: You must output in the exact same language and script as the 'CURRENT TEXT', unless the task explicitly asks to translate."
     tone_text = tone or "Infer the appropriate tone from the conversation."
 
-    return f"TASK:\n{task}\n\nLANGUAGE:\n{language_text}\n\nTONE:\n{tone_text}\n\nCURRENT TEXT:\n<<<\n{text}\n>>>\n\nReturn ONLY the final result."
+    # 🚀 NAYA: Wrapper ke end mein sabse strict instruction
+    return f"TASK:\n{task}\n\nLANGUAGE RULE:\n{language_text}\n\nTONE:\n{tone_text}\n\nCURRENT TEXT:\n<<<\n{text}\n>>>\n\nCRITICAL INSTRUCTION: Return ONLY the final generated text. Do NOT add notes, explanations, quotes, or acknowledge the prompt."
 
 # ============================================================
 # MAIN API
