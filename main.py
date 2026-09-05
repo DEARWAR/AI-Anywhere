@@ -33,7 +33,7 @@ DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
 # NOTE: compound-mini is an agentic tool-use system (web search / code exec)
 # with unpredictable rate limits. It's the wrong tool for plain text tasks
 # like @fix/@translate, so the default was changed to a lightweight text model.
-FAST_MODEL = os.getenv("AI_FAST_MODEL", "llama-3.1-8b-instant")
+FAST_MODEL = os.getenv("AI_FAST_MODEL", "groq/compound-mini")
 
 # qwen3.6-27b is noticeably pricier on output tokens than llama-3.3-70b-versatile
 # or gpt-oss-120b. Kept as-is here since it's your call on quality vs cost —
