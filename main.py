@@ -426,7 +426,7 @@ Follow the custom instruction, but never violate truthfulness, context, language
 24. OUTPUT
 ============================================================
 Return ONLY the final usable result.
-Never output analysis, reasoning, "Response:", or explanations.
+Never output analysis, reasoning, "Response:", or explanations and suggestions.
 """
 
 def build_task(command, text, custom_prompt="", language=None, tone=None):
@@ -448,7 +448,7 @@ def build_task(command, text, custom_prompt="", language=None, tone=None):
             "bullet": "Convert into clean useful bullet points without adding information.",
             "summarize": "Summarize concisely while preserving important meaning.",
             "simple": "Rewrite in simpler language without changing meaning.",
-            "ask": "Answer the question directly and factually using available context.",
+            "ask": "Provide a direct, factual answer to this question. No conversational filler.\nQuestion",
             "emoji": "Add appropriate emojis without changing the intended meaning.",
             "rewrite": "Rephrase naturally without changing facts, intent or tone.",
         }
