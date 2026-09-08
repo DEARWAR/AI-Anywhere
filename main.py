@@ -444,13 +444,22 @@ async def process_text(request: TextRequest):
         return {"result": result, "model_used": model_name, "command": command}
 
     except Exception as e:
-        print("GEMINI ERROR:", str(e))
-        # Check for common errors
-        if "429" in str(e) or "quota" in str(e).lower():
-            return {"result": "", "error": "AI service is busy. Please try later."}
-        if "context" in str(e).lower() and "length" in str(e).lower():
-            return {"result": "", "error": "Input too long. Please shorten your text."}
-        return {"result": "", "error": "AI request failed. Please try again."}
+        import traceback
+        print("=" * 50)
+        print("GEMINI EXCEPTION TYPE:", type(e))
+        print("GEMINI ERROR MESSAGE:", str(e))
+        traceback.print_exc()
+        print("=" * 50)
+        
+        # Ab error ko response mein bhi bhejo (taake app par hi dikhe)
+        error_msg = str(e)
+        if "404" in error_msg or "no longer available" in error_msg:
+            return {"result": "", "error": f"Model not found: {error_msg}"}
+        if "429" in error_msg or "quota" in error_msg.lower():
+            return {"result": "", "error": "Quota exceeded. Please try later."}
+        if "permission" in error_msg.lower() or "auth" in error_msg.lower():
+            return {"result": "", "error": "API Key invalid or missing permissions."}
+        return {"result": "", "error": f"AI Error: {error_msg[:100]}"}  # Response mein bhejo
 
 # ============================================================
 # OTHER ENDPOINTS (unchanged)
