@@ -43,6 +43,31 @@ DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "5"))
 print(f"🚀 Using LIGHT_MODEL={LIGHT_MODEL}, HEAVY_MODEL={HEAVY_MODEL}")
 
 # ============================================================
+# DEBUG: List all available models
+# ============================================================
+try:
+    print("🔍 Fetching available models...")
+    available_models = []
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            available_models.append(m.name)
+            print(f"   ✅ {m.name}")
+    if available_models:
+        # Sab se pehla available model use karo
+        DEFAULT_MODEL = available_models[0]
+        print(f"🎯 Using default model: {DEFAULT_MODEL}")
+    else:
+        print("❌ No models with generateContent found!")
+        DEFAULT_MODEL = "gemini-1.0-pro"  # fallback
+except Exception as e:
+    print(f"⚠️ Error listing models: {e}")
+    DEFAULT_MODEL = "gemini-1.0-pro"
+
+# Ab environment variables se override, nahi toh auto-detected
+LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", DEFAULT_MODEL)
+HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", DEFAULT_MODEL)
+
+# ============================================================
 # AUTH
 # ============================================================
 
