@@ -8,7 +8,11 @@ import sqlite3
 import time
 from typing import Optional, List, Dict, Any
 import google.generativeai as genai
-from google.generativeai import types
+
+# ============================================================
+# APP INIT (MUST be before any decorators)
+# ============================================================
+app = FastAPI(title="AI Anywhere")
 
 # ============================================================
 # CONFIG
@@ -18,41 +22,25 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Force v1 API endpoint (stable, not v1beta)
+genai.configure(
+    api_key=GEMINI_API_KEY,
+    client_options={'api_endpoint': 'https://generativelanguage.googleapis.com/v1'}
+)
 
-# 🧠 AUTO MODEL SELECTION - Kabhi 404 nahi aayega
-def get_available_model():
-    """Return the first available model that supports generateContent"""
-    try:
-        models = genai.list_models()
-        for model in models:
-            if 'generateContent' in model.supported_generation_methods:
-                # Name already without "models/" prefix
-                return model.name
-    except Exception as e:
-        print("Model listing failed:", e)
-        # Fallback to absolute safest known model
-        return "gemini-1.0-pro"
-    
-    # Agar koi na mile toh fallback
-    return "gemini-1.0-pro"
+# Sabse stable model – universally available, no prefix
+STABLE_MODEL = "gemini-1.0-pro"
 
-# Runtime pe ek baar fetch karo
-try:
-    DEFAULT_MODEL = get_available_model()
-    print(f"✅ Selected Gemini model: {DEFAULT_MODEL}")
-except Exception as e:
-    print("⚠️ Model selection error, using fallback:", e)
-    DEFAULT_MODEL = "gemini-1.0-pro"
-
-# Ab environment variable se override ho sakta hai, nahi toh auto-detected
-LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", DEFAULT_MODEL)
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", DEFAULT_MODEL)
+# Environment variables override (if set), otherwise stable model
+LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", STABLE_MODEL)
+HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", STABLE_MODEL)
 
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
 HISTORY_LIMIT = 5
 DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "5"))
+
+print(f"🚀 Using LIGHT_MODEL={LIGHT_MODEL}, HEAVY_MODEL={HEAVY_MODEL}")
 
 # ============================================================
 # AUTH
@@ -65,7 +53,7 @@ def verify_api_key(x_api_key: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Invalid or missing API key.")
 
 # ============================================================
-# DATABASE (same as before – no changes)
+# DATABASE FUNCTIONS
 # ============================================================
 
 def db():
@@ -103,10 +91,6 @@ def db():
     """)
     conn.commit()
     return conn
-
-# ... (get_chat_history, save_chat_message, load_user_profile, save_user_profile, get_today_usage, increment_today_usage) 
-# These functions remain exactly as in the original code – no changes needed.
-# I will copy them below for completeness.
 
 def get_chat_history(user_id: str, contact_name: str) -> List[Dict[str, str]]:
     conn = db()
@@ -152,7 +136,7 @@ def save_chat_message(user_id: str, contact_name: str, role: str, content: str):
         conn.close()
 
 # ============================================================
-# USER PROFILE functions (unchanged)
+# USER PROFILE
 # ============================================================
 
 DEFAULT_PROFILE = {
@@ -188,7 +172,7 @@ def save_user_profile(user_id: str, writing_style: str, emoji_preference: str):
         conn.close()
 
 # ============================================================
-# DAILY USAGE functions (unchanged)
+# DAILY USAGE
 # ============================================================
 
 def _today_str() -> str:
@@ -217,7 +201,7 @@ def increment_today_usage(user_id: str):
         conn.close()
 
 # ============================================================
-# REQUEST MODELS (unchanged)
+# REQUEST MODELS
 # ============================================================
 
 class TextRequest(BaseModel):
@@ -241,7 +225,7 @@ class UpdateProfileRequest(BaseModel):
     emoji_preference: Optional[str] = None
 
 # ============================================================
-# COMMAND ALIASES (unchanged)
+# COMMAND ALIASES
 # ============================================================
 
 ALIASES = {
@@ -276,7 +260,7 @@ def normalize_command(command: str) -> str:
     return ALIASES.get(raw, raw.lstrip("/"))
 
 # ============================================================
-# TEXT CLEANUP (unchanged)
+# TEXT CLEANUP
 # ============================================================
 
 def clean_output(text: str) -> str:
@@ -301,10 +285,9 @@ def sanitize_history(items):
     return clean[-HISTORY_LIMIT:]
 
 # ============================================================
-# NEW: SHORT, FOCUSED SYSTEM PROMPTS
+# SYSTEM PROMPTS (Short & Command-Specific)
 # ============================================================
 
-# Common instruction for all tasks
 BASE_INSTRUCTION = """
 You are AI Anywhere, a text transformation assistant.
 - Strictly follow the user's command.
@@ -313,14 +296,12 @@ You are AI Anywhere, a text transformation assistant.
 - Never add explanations, notes, or conversational filler. Output only the final transformed text.
 """
 
-# For light commands (fix, translate, short, etc.)
 LIGHT_SYSTEM = BASE_INSTRUCTION + """
 The task is straightforward. Apply the transformation exactly as asked.
 - If translating, output only the translation.
 - If fixing, correct grammar/spelling while keeping the original language.
 """
 
-# For heavy commands (reply, ask, improve, expand)
 HEAVY_SYSTEM = BASE_INSTRUCTION + """
 For @reply: Write a natural, human-like reply that fits the context and the user's communication style. Match the tone and language of the original message. Do not sound like an AI.
 For @ask: Answer the question directly and factually. If you don't know, say "I don't know." Do not repeat or rephrase the question.
@@ -328,15 +309,13 @@ For @improve / @expand: Enhance clarity and naturalness without inventing facts.
 """
 
 # ============================================================
-# BUILD TASK (simplified, but still includes command-specific hints)
+# BUILD TASK
 # ============================================================
 
 def build_task(command, text, custom_prompt="", language=None, tone=None):
     if custom_prompt.strip():
         return f"Instruction: {custom_prompt.strip()}\n\nText to process:\n{text}"
     
-    # For simple commands, just say the command and the text
-    # Gemini can infer what to do from the command name
     command_instructions = {
         "reply": "Write a natural reply to this message.",
         "fix": "Fix grammar, spelling, and punctuation.",
@@ -364,20 +343,14 @@ def build_task(command, text, custom_prompt="", language=None, tone=None):
     return f"{instruction}\n\nText:\n{text}"
 
 # ============================================================
-# GEMINI GENERATION (sync wrapper)
+# GEMINI GENERATION (Synchronous wrapper)
 # ============================================================
 
 def generate_gemini_response(model_name: str, system_prompt: str, contents: List[Dict], temp: float = 0.25) -> str:
-    """
-    contents is a list of {'role': 'user'/'model', 'parts': [text]}.
-    System prompt is passed separately.
-    """
     model = genai.GenerativeModel(
         model_name=model_name,
         system_instruction=system_prompt
     )
-    # Convert contents to the format expected by generate_content
-    # The contents list can be passed as is if roles are 'user' and 'model'
     response = model.generate_content(
         contents=contents,
         generation_config={"temperature": temp}
@@ -417,7 +390,7 @@ async def process_text(request: TextRequest):
         if supplied:
             history = supplied
 
-    # Build system prompt and select model based on command
+    # Select model and system prompt based on command
     if command in ("reply", "ask", "improve", "expand"):
         system_prompt = HEAVY_SYSTEM
         model_name = HEAVY_MODEL
@@ -425,28 +398,25 @@ async def process_text(request: TextRequest):
         system_prompt = LIGHT_SYSTEM
         model_name = LIGHT_MODEL
 
-    # Optionally add user profile context (only if relevant)
+    # Add user profile context only for reply
     style = str(profile.get("writing_style", "Natural, simple and respectful"))
     emoji_pref = str(profile.get("emoji_preference", "rare"))
     if command == "reply":
         system_prompt += f"\nUser's writing style: {style}. Emoji preference: {emoji_pref}. Use this as a guide, but prioritize the actual conversation."
 
-    # Build the task prompt
+    # Build the task
     task = build_task(command, original_text, request.custom_prompt, request.language, request.tone)
 
-    # Prepare conversation contents for Gemini
+    # Prepare Gemini conversation contents
     contents = []
-    # Include history (up to HISTORY_LIMIT)
     for msg in history:
         role = "user" if msg["role"] == "user" else "model"
         contents.append({"role": role, "parts": [msg["content"]]})
-    # Add current user message
     contents.append({"role": "user", "parts": [task]})
 
     print(f"REQUEST | user={user_id} | contact={contact_name} | command={command} | model={model_name}")
 
     try:
-        # Call Gemini via threadpool
         result = await run_in_threadpool(
             generate_gemini_response,
             model_name,
@@ -469,25 +439,15 @@ async def process_text(request: TextRequest):
         return {"result": result, "model_used": model_name, "command": command}
 
     except Exception as e:
-        import traceback
-        print("=" * 50)
-        print("GEMINI EXCEPTION TYPE:", type(e))
-        print("GEMINI ERROR MESSAGE:", str(e))
-        traceback.print_exc()
-        print("=" * 50)
-        
-        # Ab error ko response mein bhi bhejo (taake app par hi dikhe)
-        error_msg = str(e)
-        if "404" in error_msg or "no longer available" in error_msg:
-            return {"result": "", "error": f"Model not found: {error_msg}"}
-        if "429" in error_msg or "quota" in error_msg.lower():
-            return {"result": "", "error": "Quota exceeded. Please try later."}
-        if "permission" in error_msg.lower() or "auth" in error_msg.lower():
-            return {"result": "", "error": "API Key invalid or missing permissions."}
-        return {"result": "", "error": f"AI Error: {error_msg[:100]}"}  # Response mein bhejo
+        print("GEMINI ERROR:", str(e))
+        if "429" in str(e) or "quota" in str(e).lower():
+            return {"result": "", "error": "AI service busy. Please try later."}
+        if "context" in str(e).lower() and "length" in str(e).lower():
+            return {"result": "", "error": "Input too long. Please shorten your text."}
+        return {"result": "", "error": f"AI request failed: {str(e)[:100]}"}
 
 # ============================================================
-# OTHER ENDPOINTS (unchanged)
+# OTHER ENDPOINTS
 # ============================================================
 
 @app.get("/keep_awake")
