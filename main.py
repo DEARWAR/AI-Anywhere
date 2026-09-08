@@ -8,10 +8,8 @@ import sqlite3
 import time
 from typing import Optional, List, Dict, Any
 import google.generativeai as genai
+import google.generativeai as genai
 from google.generativeai import types
-
-
-app = FastAPI(title="AI Anywhere")
 
 # ============================================================
 # CONFIG
@@ -20,11 +18,37 @@ app = FastAPI(title="AI Anywhere")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set")
+
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Model selection via environment variables
-LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "gemini-1.0-pro")
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "gemini-1.0-pro")
+# 🧠 AUTO MODEL SELECTION - Kabhi 404 nahi aayega
+def get_available_model():
+    """Return the first available model that supports generateContent"""
+    try:
+        models = genai.list_models()
+        for model in models:
+            if 'generateContent' in model.supported_generation_methods:
+                # Name already without "models/" prefix
+                return model.name
+    except Exception as e:
+        print("Model listing failed:", e)
+        # Fallback to absolute safest known model
+        return "gemini-1.0-pro"
+    
+    # Agar koi na mile toh fallback
+    return "gemini-1.0-pro"
+
+# Runtime pe ek baar fetch karo
+try:
+    DEFAULT_MODEL = get_available_model()
+    print(f"✅ Selected Gemini model: {DEFAULT_MODEL}")
+except Exception as e:
+    print("⚠️ Model selection error, using fallback:", e)
+    DEFAULT_MODEL = "gemini-1.0-pro"
+
+# Ab environment variable se override ho sakta hai, nahi toh auto-detected
+LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", DEFAULT_MODEL)
+HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", DEFAULT_MODEL)
 
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
