@@ -8,7 +8,6 @@ import sqlite3
 import time
 from typing import Optional, List, Dict, Any
 import google.generativeai as genai
-import google.generativeai as genai
 from google.generativeai import types
 
 # ============================================================
