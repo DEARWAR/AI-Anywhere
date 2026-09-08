@@ -22,7 +22,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 # Model selection via environment variables
 LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "models/gemini-1.5-flash")
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "models/gemini-1.5-pro")
+HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "models/gemini-1.5-flash")
 
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
