@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 import google.generativeai as genai
 
 # ============================================================
-# APP INIT (MUST be before any decorators)
+# APP INIT
 # ============================================================
 app = FastAPI(title="AI Anywhere")
 
@@ -22,50 +22,22 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set")
 
-# Force v1 API endpoint (stable, not v1beta)
+# Use stable v1 endpoint (not v1beta) – avoids model 404 issues
 genai.configure(
     api_key=GEMINI_API_KEY,
     client_options={'api_endpoint': 'https://generativelanguage.googleapis.com/v1'}
 )
 
-# Sabse stable model – universally available, no prefix
-STABLE_MODEL = "gemini-1.0-pro"
-
-# Environment variables override (if set), otherwise stable model
-LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", STABLE_MODEL)
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", STABLE_MODEL)
+# Direct model names – NO "models/" prefix, NO auto-detection
+LIGHT_MODEL = "gemini-1.0-pro"
+HEAVY_MODEL = "gemini-1.0-pro"
 
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
 HISTORY_LIMIT = 5
 DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "5"))
 
-print(f"🚀 Using LIGHT_MODEL={LIGHT_MODEL}, HEAVY_MODEL={HEAVY_MODEL}")
-
-# ============================================================
-# DEBUG: List all available models
-# ============================================================
-try:
-    print("🔍 Fetching available models...")
-    available_models = []
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            available_models.append(m.name)
-            print(f"   ✅ {m.name}")
-    if available_models:
-        # Sab se pehla available model use karo
-        DEFAULT_MODEL = available_models[0]
-        print(f"🎯 Using default model: {DEFAULT_MODEL}")
-    else:
-        print("❌ No models with generateContent found!")
-        DEFAULT_MODEL = "gemini-1.0-pro"  # fallback
-except Exception as e:
-    print(f"⚠️ Error listing models: {e}")
-    DEFAULT_MODEL = "gemini-1.0-pro"
-
-# Ab environment variables se override, nahi toh auto-detected
-LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", DEFAULT_MODEL)
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", DEFAULT_MODEL)
+print(f"🚀 Using LIGHT={LIGHT_MODEL}, HEAVY={HEAVY_MODEL}")
 
 # ============================================================
 # AUTH
@@ -78,7 +50,7 @@ def verify_api_key(x_api_key: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Invalid or missing API key.")
 
 # ============================================================
-# DATABASE FUNCTIONS
+# DATABASE FUNCTIONS (same as before, unchanged)
 # ============================================================
 
 def db():
@@ -310,7 +282,7 @@ def sanitize_history(items):
     return clean[-HISTORY_LIMIT:]
 
 # ============================================================
-# SYSTEM PROMPTS (Short & Command-Specific)
+# SYSTEM PROMPTS
 # ============================================================
 
 BASE_INSTRUCTION = """
@@ -368,7 +340,7 @@ def build_task(command, text, custom_prompt="", language=None, tone=None):
     return f"{instruction}\n\nText:\n{text}"
 
 # ============================================================
-# GEMINI GENERATION (Synchronous wrapper)
+# GEMINI GENERATION
 # ============================================================
 
 def generate_gemini_response(model_name: str, system_prompt: str, contents: List[Dict], temp: float = 0.25) -> str:
@@ -376,9 +348,11 @@ def generate_gemini_response(model_name: str, system_prompt: str, contents: List
         model_name=model_name,
         system_instruction=system_prompt
     )
+    # Extended timeout to prevent network issues
     response = model.generate_content(
         contents=contents,
-        generation_config={"temperature": temp}
+        generation_config={"temperature": temp},
+        request_options={"timeout": 120}
     )
     return response.text
 
@@ -396,7 +370,6 @@ async def process_text(request: TextRequest):
     if not original_text:
         return {"result": "", "error": "Text is empty."}
 
-    # Server-side free-tier check
     if not request.is_premium:
         used_today = await run_in_threadpool(get_today_usage, user_id)
         if used_today >= DAILY_FREE_LIMIT:
@@ -406,7 +379,6 @@ async def process_text(request: TextRequest):
                 "limit_reached": True,
             }
 
-    # Load profile and history
     profile = await run_in_threadpool(load_user_profile, user_id)
     history = await run_in_threadpool(get_chat_history, user_id, contact_name)
 
@@ -415,7 +387,6 @@ async def process_text(request: TextRequest):
         if supplied:
             history = supplied
 
-    # Select model and system prompt based on command
     if command in ("reply", "ask", "improve", "expand"):
         system_prompt = HEAVY_SYSTEM
         model_name = HEAVY_MODEL
@@ -423,16 +394,13 @@ async def process_text(request: TextRequest):
         system_prompt = LIGHT_SYSTEM
         model_name = LIGHT_MODEL
 
-    # Add user profile context only for reply
     style = str(profile.get("writing_style", "Natural, simple and respectful"))
     emoji_pref = str(profile.get("emoji_preference", "rare"))
     if command == "reply":
         system_prompt += f"\nUser's writing style: {style}. Emoji preference: {emoji_pref}. Use this as a guide, but prioritize the actual conversation."
 
-    # Build the task
     task = build_task(command, original_text, request.custom_prompt, request.language, request.tone)
 
-    # Prepare Gemini conversation contents
     contents = []
     for msg in history:
         role = "user" if msg["role"] == "user" else "model"
@@ -454,7 +422,6 @@ async def process_text(request: TextRequest):
         if not result:
             return {"result": "", "error": "AI returned empty result.", "model_used": model_name}
 
-        # Save to history
         await run_in_threadpool(save_chat_message, user_id, contact_name, "user", original_text)
         await run_in_threadpool(save_chat_message, user_id, contact_name, "assistant", result)
 
