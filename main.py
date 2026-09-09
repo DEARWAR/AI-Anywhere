@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import FastAPI, Header, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 from groq import AsyncGroq
 from starlette.concurrency import run_in_threadpool
@@ -526,3 +526,66 @@ def clear_memory(request: ClearMemoryRequest):
         return {"status": "ok", "message": "Conversation memory cleared."}
     finally:
         conn.close()
+
+
+# ============================================================
+# NEW FEATURE: VOICE ASSISTANT (AUDIO TO TRANSLATED TEXT)
+# ============================================================
+
+@app.post("/process_voice", dependencies=[Depends(verify_api_key)])
+async def process_voice(
+    audio_file: UploadFile = File(...),
+    target_language: str = Form("English"),
+    user_id: str = Form("default_user_1"),
+    is_premium: bool = Form(False)
+):
+    if client is None:
+        return {"result": "", "error": "GROQ_API_KEY is not configured."}
+
+    try:
+        # STEP 1: TRANSCRIBE THE AUDIO USING WHISPER
+        file_bytes = await audio_file.read()
+        transcription = await client.audio.transcriptions.create(
+            file=(audio_file.filename, file_bytes),
+            model="whisper-large-v3-turbo",
+            response_format="json"
+        )
+        transcribed_text = transcription.text.strip()
+
+        if not transcribed_text:
+            return {"result": "", "error": "Could not hear any speech."}
+
+        # STEP 2: TRANSLATE/PROCESS USING LIGHT TEXT MODEL
+        system_prompt = (
+            f"You are an expert translator. Translate the following text naturally into {target_language}. "
+            "Output ONLY the final translation without any quotes, notes, or extra text. "
+            f"If the text is already in {target_language}, just fix its grammar and output the fixed text."
+        )
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": transcribed_text}
+        ]
+
+        completion = await client.chat.completions.create(
+            model=LIGHT_MODEL,
+            messages=messages,
+            temperature=0.25,
+        )
+
+        final_text = completion.choices[0].message.content or ""
+        final_text = clean_output(final_text)
+
+        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3-turbo -> {LIGHT_MODEL}")
+
+        return {
+            "result": final_text, 
+            "transcribed_text": transcribed_text,
+            "model_used": f"whisper-large-v3-turbo + {LIGHT_MODEL}"
+        }
+
+    except Exception as e:
+        print("VOICE ERROR:", str(e))
+        if RateLimitError is not None and isinstance(e, RateLimitError):
+            return {"result": "", "error": "AI service is busy. Please try again."}
+        return {"result": "", "error": f"Voice processing failed: {str(e)[:100]}"}
