@@ -547,7 +547,7 @@ async def process_voice(
         file_bytes = await audio_file.read()
         transcription = await client.audio.transcriptions.create(
             file=(audio_file.filename, file_bytes),
-            model="whisper-large-v3-turbo",
+            model="whisper-large-v3",
             response_format="json"
         )
         transcribed_text = transcription.text.strip()
@@ -576,12 +576,12 @@ async def process_voice(
         final_text = completion.choices[0].message.content or ""
         final_text = clean_output(final_text)
 
-        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3-turbo -> {LIGHT_MODEL}")
+        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3 -> {LIGHT_MODEL}")
 
         return {
             "result": final_text, 
             "transcribed_text": transcribed_text,
-            "model_used": f"whisper-large-v3-turbo + {LIGHT_MODEL}"
+            "model_used": f"whisper-large-v3 + {LIGHT_MODEL}"
         }
 
     except Exception as e:
