@@ -27,8 +27,8 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
 
 # Model selection
-LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "llama-3.1-8b-instant")
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "llama-3.3-70b-versatile")
+LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "openai/gpt-oss-20b")
+HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "openai/gpt-oss-120b")
 
 HISTORY_LIMIT = 5
 DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "5"))
