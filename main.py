@@ -27,8 +27,8 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
 
 # Model selection
-LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "GPT-OSS 20B")
-HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "GPT-OSS 120B")
+LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "llama-3.1-8b-instant")
+HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "llama-3.3-70b-versatile")
 
 HISTORY_LIMIT = 5
 DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "5"))
@@ -276,9 +276,7 @@ def sanitize_history(items):
     return clean[-HISTORY_LIMIT:]
 
 # ============================================================
-# ============================================================
 # THE AI BRAIN - OLD DETAILED PROMPT + NEW SHORT PROMPTS (COMBINED)
-# ============================================================
 # ============================================================
 
 # 📌 PART 1: OLD DETAILED SYSTEM PROMPT (Your Original)
@@ -324,7 +322,7 @@ Do not confuse an earlier AI-generated response with a fact.
 3. USER'S COMMUNICATION STYLE
 ============================================================
 The user's saved style is a baseline. Match naturally: sentence length, vocabulary, directness, and language mixing.
-For @reply & @translet, make the response sound like the user could actually have written it.
+For @reply, make the response sound like the user could actually have written it.
 
 ============================================================
 4. LANGUAGE
@@ -341,6 +339,12 @@ Hindi = Devanagari only. Hinglish = Roman/Latin alphabet only.
 Default to respectful communication. If the relationship is unknown, prefer "aap" and respectful phrasing.
 
 ============================================================
+6. EMOJIS
+============================================================
+Never add emojis by default.
+Use emojis only if: the user's established style commonly uses them, OR the conversation clearly uses them naturally, OR the user explicitly requests them.
+
+============================================================
 11. CUSTOM COMMANDS
 ============================================================
 Follow the custom instruction, but never violate truthfulness, context, language, respect, or output rules.
@@ -354,6 +358,13 @@ Never output analysis, reasoning, "Response:", or explanations and suggestions.
 
 # 📌 PART 2: NEW SHORT PROMPTS (Command-Specific Add-ons)
 # ============================================================
+
+BASE_INSTRUCTION = """
+- Strictly follow the user's command.
+- Preserve the original meaning, intent, language, and script unless explicitly asked to translate.
+- Correct obvious typos and misinterpreted words using the context (e.g., "defred duty" → "deferred duty" in a customs context).
+- Never add explanations, notes, or conversational filler. Output only the final transformed text.
+"""
 
 LIGHT_SYSTEM = BASE_INSTRUCTION + """
 The task is straightforward. Apply the transformation exactly as asked.
