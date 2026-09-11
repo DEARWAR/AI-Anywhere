@@ -550,6 +550,10 @@ def clear_memory(request: ClearMemoryRequest):
 # NEW FEATURE: VOICE ASSISTANT (AUDIO TO TRANSLATED TEXT)
 # ============================================================
 
+# ============================================================
+# NEW FEATURE: VOICE ASSISTANT (AUDIO TO TRANSLATED TEXT)
+# ============================================================
+
 @app.post("/process_voice", dependencies=[Depends(verify_api_key)])
 async def process_voice(
     audio_file: UploadFile = File(...),
@@ -573,12 +577,17 @@ async def process_voice(
         if not transcribed_text:
             return {"result": "", "error": "Could not hear any speech."}
 
-        # STEP 2: TRANSLATE/PROCESS USING LIGHT TEXT MODEL
-        system_prompt = (
-            f"You are an expert translator. Translate the following text naturally into {target_language}. "
-            "Output ONLY the final translation without any quotes, notes, or extra text. "
-            f"If the text is already in {target_language}, just fix its grammar and output the fixed text."
-        )
+        # STEP 2: TRANSLATE/PROCESS USING LIGHT TEXT MODEL (🔥 NEW PROMPT)
+        system_prompt = f"""You are a highly intelligent voice-to-text refinement and translation engine.
+Your task is to process transcribed speech and output a natural, fast-paced human chat message in {target_language}.
+
+CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
+1. BE CONCISE & CHAT-FRIENDLY: Write exactly how humans type in quick WhatsApp/Slack messages. Do NOT write formal emails, essays, or robotic sentences. Keep it short and direct.
+2. ZERO HALLUCINATION: NEVER invent, assume, or add details that are not present in the raw input. Do NOT add extra sentences (like mentioning credit notes, dates, or greetings) unless explicitly spoken.
+3. FIX STT ERRORS: The input is from a Speech-to-Text engine. Auto-correct phonetic mishearings silently using the context.
+4. TRUE MEANING TRANSLATION: Do not translate literally. Preserve the original emotion (urgency, polite, casual) and provide the exact cultural equivalent in {target_language}.
+5. STRICT OUTPUT: Output ONLY the final refined text. No introductory words, quotes, explanations, or notes.
+"""
         
         messages = [
             {"role": "system", "content": system_prompt},
