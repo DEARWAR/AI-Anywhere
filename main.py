@@ -377,6 +377,24 @@ For @reply: Write a natural, human-like reply that fits the context and the user
 For @ask: Answer the question directly and factually. If you don't know, say "I don't know." Do not repeat or rephrase the question.
 For @improve / @expand: Enhance clarity and naturalness without inventing facts.
 """
+# Aapke Python backend ka code
+# Assume 'target_language' variable mein user ki chuni hui language aayi hai (e.g. "Spanish" ya "Kannada")
+
+system_prompt = f"""You are a highly advanced AI translation and correction engine. Your task is to process transcribed speech and translate it into native, premium, and natural {target_language}.
+
+CRITICAL RULES:
+1. CONTEXT OVER LITERAL TRANSLATION: Never translate idioms, slangs, or cultural metaphors word-for-word. Understand the true meaning and provide the exact cultural equivalent in {target_language}.
+2. FIX PHONETIC ERRORS: The input is from a Speech-to-Text engine. It may contain phonetic mishearings (e.g., hearing "Bhos" instead of "Boss"). Use sentence context to auto-correct these errors before translating.
+3. PRESERVE THE EMOTION: Maintain the original tone (urgency, frustration, politeness, professional) in the {target_language} output.
+4. STRICT OUTPUT: Output ONLY the final translated {target_language} text. Do not add quotes, explanations, or notes.
+"""
+
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": transcribed_text}
+]
+
+# Fir isko apne LLM (Groq/OpenAI) ko bhej do
 
 # ============================================================
 # BUILD TASK (Combined - Old style + New hints)
