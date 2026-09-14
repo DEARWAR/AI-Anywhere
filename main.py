@@ -31,7 +31,8 @@ LIGHT_MODEL = os.getenv("AI_LIGHT_MODEL", "openai/gpt-oss-20b")
 HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "openai/gpt-oss-120b")
 
 HISTORY_LIMIT = 5
-DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "5"))
+# 🛡️ SECURITY NET SET TO 70
+DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "70"))
 
 # ============================================================
 # AUTH
@@ -279,9 +280,7 @@ def sanitize_history(items):
 # THE AI BRAIN - OLD DETAILED PROMPT + NEW SHORT PROMPTS (COMBINED)
 # ============================================================
 
-# 📌 PART 1: OLD DETAILED SYSTEM PROMPT (Your Original)
-# ============================================================
-
+# 📌 PART 1: OLD DETAILED SYSTEM PROMPT
 SYSTEM_CONTEXT = r"""
 You are AI Anywhere, a personal communication intelligence engine.
 
@@ -357,8 +356,6 @@ Never output analysis, reasoning, "Response:", or explanations and suggestions.
 """
 
 # 📌 PART 2: NEW SHORT PROMPTS (Command-Specific Add-ons)
-# ============================================================
-
 BASE_INSTRUCTION = """
 - Strictly follow the user's command.
 - Preserve the original meaning, intent, language, and script unless explicitly asked to translate.
@@ -377,27 +374,9 @@ For @reply: Write a natural, human-like reply that fits the context and the user
 For @ask: Answer the question directly and factually. If you don't know, say "I don't know." Do not repeat or rephrase the question.
 For @improve / @expand: Enhance clarity and naturalness without inventing facts.
 """
-# Aapke Python backend ka code
-# Assume 'target_language' variable mein user ki chuni hui language aayi hai (e.g. "Spanish" ya "Kannada")
-
-system_prompt = f"""You are a highly advanced AI translation and correction engine. Your task is to process transcribed speech and translate it into native, premium, and natural {target_language}.
-
-CRITICAL RULES:
-1. CONTEXT OVER LITERAL TRANSLATION: Never translate idioms, slangs, or cultural metaphors word-for-word. Understand the true meaning and provide the exact cultural equivalent in {target_language}.
-2. FIX PHONETIC ERRORS: The input is from a Speech-to-Text engine. It may contain phonetic mishearings (e.g., hearing "Bhos" instead of "Boss"). Use sentence context to auto-correct these errors before translating.
-3. PRESERVE THE EMOTION: Maintain the original tone (urgency, frustration, politeness, professional) in the {target_language} output.
-4. STRICT OUTPUT: Output ONLY the final translated {target_language} text. Do not add quotes, explanations, or notes.
-"""
-
-messages = [
-    {"role": "system", "content": system_prompt},
-    {"role": "user", "content": transcribed_text}
-]
-
-# Fir isko apne LLM (Groq/OpenAI) ko bhej do
 
 # ============================================================
-# BUILD TASK (Combined - Old style + New hints)
+# BUILD TASK
 # ============================================================
 
 def build_task(command, text, custom_prompt="", language=None, tone=None):
@@ -431,7 +410,7 @@ def build_task(command, text, custom_prompt="", language=None, tone=None):
     return f"TASK:\n{task}\n\nLANGUAGE RULE:\n{language_text}\n\nTONE:\n{tone_text}\n\nCURRENT TEXT:\n<<<\n{text}\n>>>\n\nCRITICAL INSTRUCTION: Return ONLY the final generated text. Do NOT add notes, explanations, quotes, or acknowledge the prompt."
 
 # ============================================================
-# MAIN API ENDPOINT
+# MAIN API ENDPOINT (TEXT)
 # ============================================================
 
 @app.get("/keep_awake")
@@ -451,13 +430,13 @@ async def process_text(request: TextRequest):
     if client is None:
         return {"result": "", "error": "GROQ_API_KEY is not configured."}
 
-    # Server-side free-tier check
+    # 🛡️ SECURITY NET FOR TEXT (Hacker Protection)
     if not request.is_premium:
         used_today = await run_in_threadpool(get_today_usage, user_id)
         if used_today >= DAILY_FREE_LIMIT:
             return {
                 "result": "",
-                "error": f"Daily free limit reached ({DAILY_FREE_LIMIT}/day). Upgrade to Premium.",
+                "error": "Security Block: Too many requests.",
                 "limit_reached": True,
             }
 
@@ -472,11 +451,9 @@ async def process_text(request: TextRequest):
 
     # Select model and system prompt based on command
     if command in ("reply", "ask", "improve", "expand"):
-        # HEAVY: Use OLD detailed prompt + NEW heavy add-ons
         system_prompt = SYSTEM_CONTEXT + "\n\n" + HEAVY_SYSTEM
         selected_model = HEAVY_MODEL
     else:
-        # LIGHT: Use OLD detailed prompt + NEW light add-ons
         system_prompt = SYSTEM_CONTEXT + "\n\n" + LIGHT_SYSTEM
         selected_model = LIGHT_MODEL
 
@@ -512,6 +489,7 @@ async def process_text(request: TextRequest):
         await run_in_threadpool(save_chat_message, user_id, contact_name, "user", original_text)
         await run_in_threadpool(save_chat_message, user_id, contact_name, "assistant", result)
 
+        # 🛡️ RECORD USAGE
         if not request.is_premium:
             await run_in_threadpool(increment_today_usage, user_id)
 
@@ -545,13 +523,8 @@ def clear_memory(request: ClearMemoryRequest):
     finally:
         conn.close()
 
-
 # ============================================================
-# NEW FEATURE: VOICE ASSISTANT (AUDIO TO TRANSLATED TEXT)
-# ============================================================
-
-# ============================================================
-# NEW FEATURE: VOICE ASSISTANT (AUDIO TO TRANSLATED TEXT)
+# NEW FEATURE: VOICE ASSISTANT (SECURE VERSION)
 # ============================================================
 
 @app.post("/process_voice", dependencies=[Depends(verify_api_key)])
@@ -563,6 +536,16 @@ async def process_voice(
 ):
     if client is None:
         return {"result": "", "error": "GROQ_API_KEY is not configured."}
+
+    # 🛡️ SECURITY NET FOR VOICE (Hacker Protection)
+    if not is_premium:
+        used_today = await run_in_threadpool(get_today_usage, user_id)
+        if used_today >= DAILY_FREE_LIMIT:
+            return {
+                "result": "", 
+                "error": "Security Block: Too many voice requests.",
+                "limit_reached": True
+            }
 
     try:
         # STEP 1: TRANSCRIBE THE AUDIO USING WHISPER
@@ -602,6 +585,10 @@ CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
 
         final_text = completion.choices[0].message.content or ""
         final_text = clean_output(final_text)
+
+        # 🛡️ RECORD USAGE (Agar secure user hai toh uski limit count karo)
+        if not is_premium:
+            await run_in_threadpool(increment_today_usage, user_id)
 
         print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3 -> {LIGHT_MODEL}")
 
