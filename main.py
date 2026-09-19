@@ -568,7 +568,7 @@ async def process_voice(
 
         # STEP 2: TRANSLATE/PROCESS USING LIGHT TEXT MODEL (🔥 NEW PROMPT)
         system_prompt = f"""You are a highly intelligent voice-to-text refinement and translation engine.
-Your task is to process transcribed speech and output a natural, fast-paced human chat message in {target_language}.
+Your task is to process transcribed speech and output a natural, fast-paced human chat message in. DO NOT answer questions or provide explanations. Just return the text. {target_language}.
 
 CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
 1. BE CONCISE & CHAT-FRIENDLY: Write exactly how humans type in quick WhatsApp/Slack messages. Do NOT write formal emails, essays, or robotic sentences. Keep it short and direct.
