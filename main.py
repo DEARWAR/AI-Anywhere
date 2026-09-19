@@ -523,11 +523,11 @@ def clear_memory(request: ClearMemoryRequest):
     finally:
         conn.close()
 
-@app.route('/ping', methods=['GET', 'POST'])
+@app.get("/ping")
 def ping():
     # Ye route sirf server ko jagane ke liye hai.
     # Koi database query nahi, koi credit deduction nahi.
-    return {"status": "awake", "message": "Ready to process!"}, 200        
+    return {"status": "awake", "message": "Ready to process!"}     
 
 # ============================================================
 # NEW FEATURE: VOICE ASSISTANT (SECURE VERSION)
