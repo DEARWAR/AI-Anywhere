@@ -559,7 +559,9 @@ async def process_voice(
         transcription = await client.audio.transcriptions.create(
             file=(audio_file.filename, file_bytes),
             model="whisper-large-v3",
-            response_format="json"
+            response_format="json",
+            language="hi",
+            prompt="Business conversation in Hinglish (Hindi + English mixed) about Excel sheet, company data, invoice, shipment, container, freight, GST, accounting, meeting time."
         )
         transcribed_text = transcription.text.strip()
 
@@ -573,9 +575,16 @@ Your task is to process transcribed speech and output a natural, fast-paced huma
 CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
 1. BE CONCISE & CHAT-FRIENDLY: Write exactly how humans type in quick WhatsApp/Slack messages. Do NOT write formal emails, essays, or robotic sentences. Keep it short and direct.
 2. ZERO HALLUCINATION: NEVER invent, assume, or add details that are not present in the raw input. Do NOT add extra sentences (like mentioning credit notes, dates, or greetings) unless explicitly spoken.
-3. FIX STT ERRORS: The input is from a Speech-to-Text engine. Auto-correct phonetic mishearings silently using the context.
+3. FIX STT ERRORS: If the transcribed text has stutters, repeated filler words, or obviously garbled/broken phrases from the STT engine, clean them up. Do NOT change or "correct" words, brand names, or common English terms (like Excel, Invoice, GST) that already look coherent — leave them exactly as transcribed.
 4. TRUE MEANING TRANSLATION: Do not translate literally. Preserve the original emotion (urgency, polite, casual) and provide the exact cultural equivalent in {target_language}.
-5. STRICT OUTPUT: Output ONLY the final refined text. No introductory words, quotes, explanations, or notes.
+5. RESOLVE SELF-CORRECTIONS (BUT DON'T DELETE EXPLANATIONS): Speakers sometimes think out loud and reject their own earlier value using cue words like "nahi", "actually", "wait", "arre nahi", "socho toh". In that case, DROP the rejected value and hesitation sounds (hmm, umm, aaa) entirely, keep only the final corrected value.
+   However, if the speaker is instead CONNECTING two true facts with a reason (cue words like "lekin/par", "isliye", "kyunki", "iss wajah se"), that is an EXPLANATION, not a mistake — KEEP the full sentence, don't shorten it.
+   Examples:
+   - Input: "container 2 bhej do... nahi ek second, 3 chahiye honge" -> Output: "3 container bhejo." (self-correction: drop rejected value)
+   - Input: "pehle 2 container bhej rahe the... lekin order badh gaya hai, isliye ab 3 bhejne padenge" -> Output: "Pehle 2 container bhej rahe the, lekin order badh gaya hai, isliye ab 3 bhejne padenge." (explanation: keep everything)
+   - Input: "Friday tak deliver ho jayega... arre nahi Friday nahi, Saturday hoga" -> Output: "Saturday tak deliver ho jayega." (self-correction: drop rejected value)
+   - Input: "Friday tak deliver hona tha... par customs mein delay ho gaya, isliye ab Saturday hoga" -> Output: "Friday tak deliver hona tha, par customs mein delay ho gaya, isliye ab Saturday hoga." (explanation: keep everything)
+6. STRICT OUTPUT: Output ONLY the final refined text. No introductory words, quotes, explanations, or notes.
 """
         
         messages = [
