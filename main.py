@@ -561,7 +561,7 @@ async def process_voice(
             model="whisper-large-v3",
             response_format="json",
             language="hi",
-            prompt="Business conversation in Hinglish (Hindi + English mixed) about Excel sheet, company data, invoice, shipment, container, freight, GST, accounting, meeting time."
+            prompt="Business conversation in Hinglish (Hindi + English mixed) about Excel sheet, company data, invoice, shipment, container, freight, GST, accounting, meeting time. Common port and city names: Mundra, Nhava Sheva, JNPT, Kandla, Chennai, Mumbai, Pipavav, Cochin."
         )
         transcribed_text = transcription.text.strip()
 
@@ -580,8 +580,11 @@ Example:
 
 CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
 1. FAITHFUL & COMPLETE: Preserve the speaker's FULL meaning and EVERY piece of information they said — do NOT summarize, shorten, drop sentences, or skip details, even if parts sound repetitive. Every fact, instruction, and reason must appear in the output. The ONLY things you may remove are what rules 3 and 4 below explicitly allow (filler noise and rejected self-corrections) — nothing else should ever be dropped.
+   IMPORTANT: this rule is about not losing FACTS (names, numbers, reasons, instructions) — it does NOT mean the phrasing must be literal, padded, or robotic. Rephrase naturally and concisely the way a human would type a quick message, as long as every fact from the input is still present in the output.
+   Example: Input: "rajesh mujhe report jaldi se send karo, main wait kar raha hu" -> Output: "Rajesh, send me the report quickly, I'm waiting." (natural short phrasing — no fact was dropped, just phrased the way a person would actually type it)
 2. ZERO HALLUCINATION: NEVER invent, assume, or add details, words, or sentences that are not present in the raw input.
 3. CLEAN STT NOISE: If the transcribed text has stutters, repeated filler words (hmm, umm, aaa), or obviously garbled/broken phrases from the STT engine, clean them up. Do NOT change or "correct" words, brand names, or common English terms (like Excel, Invoice, GST, client, PC, RAM) that already look coherent — leave them exactly as transcribed.
+   PROPER NOUNS: NEVER modify place names, port names, city names, company names, or person names — even if they sound unfamiliar or don't match a common dictionary word (e.g. "Mundra", "Pipavav", "Kandla" are real Indian port names — do not "correct" them to a more familiar-sounding word). Treat any unfamiliar-sounding word as a real name first, not a mishearing, unless it makes the sentence grammatically nonsensical.
 4. RESOLVE SELF-CORRECTIONS (BUT DON'T DELETE EXPLANATIONS): Speakers sometimes think out loud and reject their own earlier value using cue words like "nahi", "actually", "wait", "arre nahi", "socho toh". In that case, DROP the rejected value and hesitation sounds (hmm, umm, aaa) entirely, keep only the final corrected value.
    However, if the speaker is instead CONNECTING two true facts with a reason (cue words like "lekin/par", "isliye", "kyunki", "iss wajah se"), that is an EXPLANATION, not a mistake — KEEP the full sentence, don't shorten it.
    Examples:
@@ -605,7 +608,7 @@ CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
         ]
 
         completion = await client.chat.completions.create(
-            model=LIGHT_MODEL,
+            model=HEAVY_MODEL,
             messages=messages,
             temperature=0.25,
         )
@@ -617,12 +620,12 @@ CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
         if not is_premium:
             await run_in_threadpool(increment_today_usage, user_id)
 
-        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3 -> {LIGHT_MODEL}")
+        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3 -> {HEAVY_MODEL}")
 
         return {
             "result": final_text, 
             "transcribed_text": transcribed_text,
-            "model_used": f"whisper-large-v3 + {LIGHT_MODEL}"
+            "model_used": f"whisper-large-v3 + {HEAVY_MODEL}"
         }
 
     except Exception as e:
