@@ -7,6 +7,8 @@ import json
 import os
 import sqlite3
 import time
+import subprocess
+import tempfile
 from typing import Optional, List, Dict, Any
 
 try:
@@ -191,6 +193,44 @@ def increment_today_usage(user_id: str):
         conn.commit()
     finally:
         conn.close()
+
+# ============================================================
+# AUDIO SPEED ADJUSTMENT HELPER (SAFE SLOW-DOWN FOR FAST SPEECH)
+# ============================================================
+
+def slow_down_audio_bytes(file_bytes: bytes, filename: str, speed_factor: float = 0.90) -> bytes:
+    """
+    Slowing down audio by speed_factor (0.90 = 10% slower) with pitch preservation using ffmpeg.
+    If ffmpeg fails or is unavailable, returns original file_bytes safely.
+    """
+    try:
+        ext = os.path.splitext(filename or "")[1] or ".m4a"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as in_file:
+            in_file.write(file_bytes)
+            in_path = in_file.name
+
+        out_path = in_path + f"_slow{ext}"
+
+        cmd = [
+            "ffmpeg", "-y", "-i", in_path,
+            "-filter:a", f"atempo={speed_factor}",
+            "-vn", out_path
+        ]
+
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "rb") as f:
+                processed_bytes = f.read()
+            if os.path.exists(in_path): os.remove(in_path)
+            if os.path.exists(out_path): os.remove(out_path)
+            return processed_bytes
+
+        if os.path.exists(in_path): os.remove(in_path)
+        if os.path.exists(out_path): os.remove(out_path)
+    except Exception as e:
+        print(f"Audio speed adjustment fallback: {e}")
+
+    return file_bytes
 
 # ============================================================
 # REQUEST MODELS
@@ -556,8 +596,12 @@ async def process_voice(
     try:
         # STEP 1: TRANSCRIBE THE AUDIO USING WHISPER
         file_bytes = await audio_file.read()
+
+        # 🎙️ SAFE AUDIO SLOW-DOWN FOR FAST SPEECH (0.90x Speed with Pitch Preservation)
+        processed_bytes = await run_in_threadpool(slow_down_audio_bytes, file_bytes, audio_file.filename, 0.90)
+
         transcription = await client.audio.transcriptions.create(
-            file=(audio_file.filename, file_bytes),
+            file=(audio_file.filename, processed_bytes),
             model="whisper-large-v3",
             response_format="json",
             language="hi",
