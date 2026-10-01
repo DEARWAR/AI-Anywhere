@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Header, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 from groq import AsyncGroq
+from deepgram import DeepgramClient, PreRecordedOptions
 from starlette.concurrency import run_in_threadpool
 import re
 import json
@@ -25,6 +26,9 @@ app = FastAPI(title="AI Anywhere")
 API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 client = AsyncGroq(api_key=API_KEY) if API_KEY else None
 
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "").strip()
+deepgram_client = DeepgramClient(api_key=DEEPGRAM_API_KEY) if DEEPGRAM_API_KEY else None
+
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
 
@@ -35,6 +39,10 @@ HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "openai/gpt-oss-120b")
 HISTORY_LIMIT = 5
 # 🛡️ SECURITY NET SET TO 70
 DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "70"))
+
+# Maximum audio duration allowed before sending to Deepgram.
+# 11 seconds = safety buffer for the Android 10-second recording limit.
+MAX_VOICE_DURATION = 11.0
 
 # ============================================================
 # AUTH
@@ -535,6 +543,62 @@ def ping():
 # NEW FEATURE: VOICE ASSISTANT (SECURE VERSION)
 # ============================================================
 
+def get_audio_duration(file_bytes: bytes, filename: str) -> float | None:
+    """
+    Only checks the audio duration.
+    IMPORTANT:
+    - Does NOT modify the audio.
+    - Does NOT trim the audio.
+    - Does NOT re-encode the audio.
+    - Returns duration in seconds.
+    """
+
+    temp_path = None
+
+    try:
+        suffix = os.path.splitext(filename or "")[1] or ".audio"
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=suffix
+        ) as temp_file:
+            temp_file.write(file_bytes)
+            temp_path = temp_file.name
+
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                temp_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            return None
+
+        duration_text = result.stdout.strip()
+
+        if not duration_text:
+            return None
+
+        return float(duration_text)
+
+    except Exception as e:
+        print("AUDIO DURATION CHECK ERROR:", str(e))
+        return None
+
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
 @app.post("/process_voice", dependencies=[Depends(verify_api_key)])
 async def process_voice(
     audio_file: UploadFile = File(...),
@@ -544,6 +608,9 @@ async def process_voice(
 ):
     if client is None:
         return {"result": "", "error": "GROQ_API_KEY is not configured."}
+
+    if deepgram_client is None:
+        return {"result": "", "error": "DEEPGRAM_API_KEY is not configured."}
 
     # 🛡️ SECURITY NET FOR VOICE (Hacker Protection)
     if not is_premium:
@@ -556,17 +623,75 @@ async def process_voice(
             }
 
     try:
-        # STEP 1: TRANSCRIBE THE AUDIO USING WHISPER
+        # STEP 1: TRANSCRIBE THE AUDIO USING DEEPGRAM NOVA-3
         file_bytes = await audio_file.read()
 
-        transcription = await client.audio.transcriptions.create(
-            file=(audio_file.filename, file_bytes),
-            model="whisper-large-v3",
-            response_format="json",
-            language="hi",
-            prompt="Business conversation in Hinglish (Hindi + English mixed) about Excel sheet, company data, invoice, shipment, container, freight, GST, accounting, meeting time. Common port and city names: Mundra, Nhava Sheva, JNPT, Kandla, Chennai, Mumbai, Pipavav, Cochin."
+        # ============================================================
+        # SERVER-SIDE AUDIO DURATION SAFETY CHECK
+        # ============================================================
+
+        audio_duration = await run_in_threadpool(
+            get_audio_duration,
+            file_bytes,
+            audio_file.filename or "audio"
         )
-        transcribed_text = transcription.text.strip()
+
+        # Fail closed:
+        # If server cannot determine duration, DO NOT send audio to Deepgram.
+        if audio_duration is None:
+            return {
+                "result": "",
+                "error": "Could not verify audio duration."
+            }
+
+        print(
+            f"VOICE AUDIO | user={user_id} | "
+            f"duration={audio_duration:.2f}s"
+        )
+
+        # HARD SERVER LIMIT:
+        # Files longer than 11 seconds NEVER go to Deepgram.
+        if audio_duration > MAX_VOICE_DURATION:
+            return {
+                "result": "",
+                "error": "Voice recording cannot be longer than 11 seconds.",
+                "duration_limit": MAX_VOICE_DURATION
+            }
+
+        source = {"buffer": file_bytes}
+        options = PreRecordedOptions(
+            model="nova-3",
+            smart_format=True,
+            language="multi",
+            keyterm=[
+                "Mundra",
+                "Nhava Sheva",
+                "JNPT",
+                "Kandla",
+                "Chennai",
+                "Mumbai",
+                "Pipavav",
+                "Cochin",
+                "Maersk",
+                "MSC",
+                "Hapag-Lloyd",
+                "CMA CGM",
+                "COSCO",
+                "Excel",
+                "invoice",
+                "shipment",
+                "container",
+                "freight",
+                "GST",
+                "accounting"
+            ]
+        )
+        transcription = await deepgram_client.listen.asyncrest.v("1").transcribe_file(
+            source, options
+        )
+        transcribed_text = transcription.results.channels[0].alternatives[0].transcript.strip()
+
+
 
         if not transcribed_text:
             return {"result": "", "error": "Could not hear any speech."}
@@ -624,12 +749,12 @@ CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
         if not is_premium:
             await run_in_threadpool(increment_today_usage, user_id)
 
-        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=whisper-large-v3 -> {HEAVY_MODEL}")
+        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=deepgram-nova-3 -> {HEAVY_MODEL}")
 
         return {
             "result": final_text, 
             "transcribed_text": transcribed_text,
-            "model_used": f"whisper-large-v3 + {HEAVY_MODEL}"
+            "model_used": f"deepgram-nova-3 + {HEAVY_MODEL}"
         }
 
     except Exception as e:
