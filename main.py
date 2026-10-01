@@ -560,7 +560,7 @@ async def process_voice(
         file_bytes = await audio_file.read()
 
         transcription = await client.audio.transcriptions.create(
-            file=(audio_file.filename, processed_bytes),
+            file=(audio_file.filename, file_bytes),
             model="whisper-large-v3",
             response_format="json",
             language="hi",
