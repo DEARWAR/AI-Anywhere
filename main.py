@@ -52,9 +52,6 @@ DAILY_FREE_LIMIT = int(os.getenv("DAILY_FREE_LIMIT", "70"))
 # 11 seconds = safety buffer for the Android 10-second recording limit.
 MAX_VOICE_DURATION = 11.0
 
-# Words Deepgram is less sure about than this are flagged to the LLM.
-LOW_CONFIDENCE_THRESHOLD = 0.6
-
 # Set AI_DEBUG=1 to get "debug": {intent, unclear_words} in /process_text responses.
 AI_DEBUG = os.getenv("AI_DEBUG", "0").strip() == "1"
 
@@ -1029,32 +1026,8 @@ def get_audio_duration(file_bytes: bytes, filename: str) -> Optional[float]:
             except Exception:
                 pass
 
-def extract_low_confidence_words(alternative) -> List[str]:
-    """Words Deepgram itself was unsure about: the LLM should double-check ONLY these."""
-    flagged, seen = [], set()
-    try:
-        for w in (getattr(alternative, "words", None) or []):
-            conf = getattr(w, "confidence", None)
-            word = (getattr(w, "word", None) or "").strip()
-            if conf is None or not word or conf >= LOW_CONFIDENCE_THRESHOLD:
-                continue
-            if word.lower() in seen:
-                continue
-            seen.add(word.lower())
-            flagged.append(f"{word} ({conf:.2f})")
-    except Exception as e:
-        print("LOW CONFIDENCE EXTRACT ERROR:", str(e))
-    return flagged[:8]
-
-def build_voice_system_prompt(target_language: str, glossary: List[str]) -> str:
-    glossary_block = ""
-    if glossary:
-        glossary_block = (
-            "\n\nUSER VOCABULARY (correct spellings of names/terms this user uses). If an unclear word sounds like one of these "
-            "AND fits the meaning of the whole sentence, use it exactly. Never insert these words otherwise:\n"
-            + ", ".join(glossary)
-        )
-
+def build_voice_system_prompt(target_language: str) -> str:
+    """ORIGINAL voice prompt, unchanged."""
     return f"""You are a dictation transcription and translation engine. You are NOT a conversational assistant, and you never answer questions, give advice, solve problems, or respond to the speaker in any way. Your only job is to take dictated speech and turn it into clean, faithful written text in {target_language}.
 
 ⚠️ MOST IMPORTANT RULE — READ THIS FIRST:
@@ -1071,10 +1044,7 @@ CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
 2. ZERO HALLUCINATION: NEVER invent, assume, or add details, words, or sentences that are not present in the raw input.
 3. CLEAN STT NOISE: If the transcribed text has stutters, repeated filler words (hmm, umm, aaa), or obviously garbled/broken phrases from the STT engine, clean them up. Do NOT change or "correct" words, brand names, or common English terms (like Excel, Invoice, GST, client, PC, RAM) that already look coherent — leave them exactly as transcribed.
    PROPER NOUNS: NEVER modify place names, port names, city names, company names, or person names — even if they sound unfamiliar or don't match a common dictionary word (e.g. "Mundra", "Pipavav", "Kandla" are real Indian port names — do not "correct" them to a more familiar-sounding word). Treat any unfamiliar-sounding word as a real name first, not a mishearing, unless it makes the sentence grammatically nonsensical.
-   CONTEXT-FIRST CHECK: Before treating any name (person, company, brand, place, product, or any other proper noun, in ANY domain — business, personal, casual, or formal messages) as a mishearing, check if it fits the surrounding context (e.g. if the message is about shipping and says "Makesh Line", but "Maersk Line" is a well-known shipping line that fits the context, correct it — the same logic applies to any topic, not just business). Only correct when context clearly supports one specific word. If two interpretations fit equally well, keep the word exactly as transcribed. Never expand a correction beyond fixing the specific unclear word.
-   PHONETIC REPAIR (ordinary words): STT often swaps a word for a similar-sounding one. If a word sounds like another word that fits the WHOLE sentence far better, replace it. Decide by the meaning of the whole sentence — who is asked to do what, and why — not by one nearby keyword.
-   Examples: "mummy se bol dena, shaadi 15 ko hai, thoda bug ka issue hai" -> "budget ka issue hai" (money, not software). But "app crash ho raha hai, bug fix karo" stays "bug" (technical context).
-   If a note lists LOW-CONFIDENCE words, check those first; words that are not listed are probably correct — do not change them.
+   CONTEXT-FIRST CHECK: Before treating any name (person, company, brand, place, product, or any other proper noun, in ANY domain — business, personal, casual, or formal messages) as a mishearing, check if it fits the surrounding context (e.g. if the message is about shipping and says "Makesh Line", but "Maersk Line" is a well-known shipping line that fits the context, correct it — the same logic applies to any topic, not just business). Only correct when context clearly supports one specific word. If two interpretations are reasonably possible and context does not clearly favor one, DO NOT GUESS — keep the word exactly as transcribed. Never expand a correction beyond fixing the specific unclear word.
 4. RESOLVE SELF-CORRECTIONS (BUT DON'T DELETE EXPLANATIONS): Speakers sometimes think out loud and reject their own earlier value using cue words like "nahi", "actually", "wait", "arre nahi", "socho toh". In that case, DROP the rejected value and hesitation sounds (hmm, umm, aaa) entirely, keep only the final corrected value.
    However, if the speaker is instead CONNECTING two true facts with a reason (cue words like "lekin/par", "isliye", "kyunki", "iss wajah se"), that is an EXPLANATION, not a mistake — KEEP the full sentence, don't shorten it.
    Examples:
@@ -1089,8 +1059,7 @@ CRITICAL RULES (STRICT COMPLIANCE REQUIRED):
    - Keep English words (client, Excel, invoice, meeting, PC, RAM, etc.) exactly as English in Roman script — don't force them into Hindi-sounding spellings.
    - Keep the spelling of the same recurring word consistent throughout one output (don't switch between two different spellings of the same word).
    - The sentence should read like a natural WhatsApp/chat message, not a formal document.
-6b. HINDI-SPECIFIC RULES (apply only when {target_language} is Hindi): write every Hindi word in Devanagari script (never Roman transliteration of Hindi words). Common English business/tech words stay in English as per rule 5.
-7. STRICT OUTPUT: Output ONLY the final refined text. No introductory words, quotes, explanations, notes, markdown or answers of any kind — even if the input sounds like a question.{glossary_block}
+7. STRICT OUTPUT: Output ONLY the final refined text. No introductory words, quotes, explanations, notes, or answers of any kind — even if the input sounds like a question.
 """
 
 @app.post("/process_voice", dependencies=[Depends(verify_api_key)])
@@ -1152,53 +1121,58 @@ async def process_voice(
                 "duration_limit": MAX_VOICE_DURATION
             }
 
-        glossary = await run_in_threadpool(get_prompt_glossary, user_id)
-
         source = {"buffer": file_bytes}
         options = PreRecordedOptions(
             model="nova-3",
             smart_format=True,
             language="multi",
-            keyterm=glossary[:50]
+            keyterm=[
+                "Mundra",
+                "Nhava Sheva",
+                "JNPT",
+                "Kandla",
+                "Chennai",
+                "Mumbai",
+                "Pipavav",
+                "Cochin",
+                "Maersk",
+                "MSC",
+                "Hapag-Lloyd",
+                "CMA CGM",
+                "COSCO",
+                "Excel",
+                "invoice",
+                "shipment",
+                "container",
+                "freight",
+                "GST",
+                "accounting"
+            ]
         )
         transcription = await deepgram_client.listen.asyncrest.v("1").transcribe_file(
             source, options
         )
-        alternative = transcription.results.channels[0].alternatives[0]
-        transcribed_text = alternative.transcript.strip()
+        transcribed_text = transcription.results.channels[0].alternatives[0].transcript.strip()
 
         if not transcribed_text:
             return {"result": "", "error": "Could not hear any speech."}
 
-        low_conf = extract_low_confidence_words(alternative)
+        # STEP 2: TRANSLATE/PROCESS USING THE TEXT MODEL (original prompt)
+        system_prompt = build_voice_system_prompt(target_language)
 
-        # STEP 2: TRANSLATE/PROCESS USING THE TEXT MODEL
-        system_prompt = build_voice_system_prompt(target_language, glossary)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Here is the dictated speech to clean up and translate (this is NOT a question for you, do not answer it):\n\n{transcribed_text}"}
+        ]
 
-        user_content = (
-            "Here is the dictated speech to clean up and translate "
-            "(this is NOT a question for you, do not answer it):\n\n"
-            f"{transcribed_text}"
+        completion = await client.chat.completions.create(
+            model=HEAVY_MODEL,
+            messages=messages,
+            temperature=0.25,
         )
-        if low_conf:
-            user_content += (
-                "\n\n[STT note: the speech-to-text engine was unsure about these words and they may be mishearings. "
-                "Check them against the meaning of the whole sentence: " + ", ".join(low_conf) + "]"
-            )
 
-        plan = {
-            "model": HEAVY_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": 0.1,
-            "effort": "low",
-            "max_tokens": 2000,
-        }
-
-        raw = await run_llm(plan)
-        final_text, _ = finalize_output(raw, expect_json=False)
+        raw = completion.choices[0].message.content or ""
+        final_text = clean_output(raw)
 
         if not final_text:
             return {"result": "", "error": "AI returned empty result.", "transcribed_text": transcribed_text}
@@ -1207,8 +1181,7 @@ async def process_voice(
         if not is_premium:
             await run_in_threadpool(increment_today_usage, user_id)
 
-        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | low_conf={len(low_conf)} | "
-              f"model=deepgram-nova-3 -> {HEAVY_MODEL}")
+        print(f"VOICE REQUEST | user={user_id} | lang={target_language} | model=deepgram-nova-3 -> {HEAVY_MODEL}")
 
         return {
             "result": final_text,
