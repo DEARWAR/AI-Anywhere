@@ -7,6 +7,8 @@ try:
 except ImportError:  # newer deepgram-sdk 3.x renamed the class
     from deepgram import PrerecordedOptions as PreRecordedOptions
 from starlette.concurrency import run_in_threadpool
+import asyncio
+import httpx
 import re
 import json
 import os
@@ -32,6 +34,12 @@ client = AsyncGroq(api_key=API_KEY) if API_KEY else None
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "").strip()
 deepgram_client = DeepgramClient(api_key=DEEPGRAM_API_KEY) if DEEPGRAM_API_KEY else None
+
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "").strip()
+
+# Default speech-to-text engine: deepgram | sarvam | whisper | all
+# (the app can override per request with a form field "engine")
+VOICE_ENGINE = os.getenv("VOICE_ENGINE", "sarvam" if SARVAM_API_KEY else "deepgram").strip().lower()
 
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 DB_FILE = os.getenv("AI_ANYWHERE_DB", "ai_memory.db")
@@ -1092,9 +1100,138 @@ Aaj teen kaam karne hain:
 3. Payment follow up
 
 5. FAITHFUL & COMPLETE: Preserve all names, numbers, places, and facts. Do not invent or add anything.
+NEVER replace a spoken word with a different word. Only (a) remove fillers, (b) apply self-corrections, (c) fix punctuation and list formatting. If a word looks odd or wrong, keep it EXACTLY as transcribed. Never shorten or alter words (for example keep "accounting", do not change it to "account").
 
 6. STRICT OUTPUT: Output ONLY the final cleaned text. No quotes, intro words, notes, or explanations.
 """
+
+
+# ============================================================
+# SPEECH-TO-TEXT ENGINES  (Deepgram / Sarvam / Groq Whisper)
+# ============================================================
+# Which engine runs?
+#   1. The app may send a form field "engine" (deepgram | sarvam | whisper | all)
+#   2. Otherwise the VOICE_ENGINE environment variable is used
+#   3. Otherwise: sarvam (if SARVAM_API_KEY is set), else deepgram
+#
+# engine=all runs every configured engine at once, uses the first good one
+# (sarvam > whisper > deepgram) for the final text, and returns all raw
+# transcripts in response["compare"] so you can compare them.
+
+STT_ENGINES = ("deepgram", "sarvam", "whisper")
+
+# Extra everyday words that help the speech engines (names/ports come from the glossary).
+VOICE_EXTRA_TERMS = [
+    "office", "website", "portal", "bug", "landline", "phone", "client", "login",
+    "PF", "EPFO", "date of birth",
+]
+
+WHISPER_PROMPT = (
+    "Sir, मैं office में हूं नहीं. आप landline से phone कर लीजिए. "
+    "website पर bug है, client portal, login, invoice, shipment, GST, accounting."
+)
+WHISPER_LANG = os.getenv("WHISPER_LANG", "hi").strip()  # empty = auto-detect
+
+
+def engine_ready(engine: str) -> bool:
+    if engine == "deepgram":
+        return deepgram_client is not None
+    if engine == "sarvam":
+        return bool(SARVAM_API_KEY)
+    if engine == "whisper":
+        return client is not None
+    return False
+
+
+def pick_engine(requested: str) -> str:
+    e = (requested or "").strip().lower() or VOICE_ENGINE
+    if e in STT_ENGINES or e == "all":
+        return e
+    return "sarvam" if SARVAM_API_KEY else "deepgram"
+
+
+def _voice_keyterms(glossary: List[str]) -> List[str]:
+    merged, seen = [], set()
+    for t in list(glossary) + VOICE_EXTRA_TERMS:
+        key = t.lower()
+        if key not in seen:
+            seen.add(key)
+            merged.append(t)
+    return merged[:60]
+
+
+async def stt_deepgram(file_bytes: bytes, user_id: str) -> str:
+    glossary = await run_in_threadpool(get_prompt_glossary, user_id, 60)
+    options = PreRecordedOptions(
+        model="nova-3",
+        smart_format=True,
+        language="multi",
+        keyterm=_voice_keyterms(glossary),
+    )
+    transcription = await deepgram_client.listen.asyncrest.v("1").transcribe_file(
+        {"buffer": file_bytes}, options
+    )
+    return transcription.results.channels[0].alternatives[0].transcript.strip()
+
+
+async def stt_sarvam(file_bytes: bytes, filename: str, content_type: str) -> str:
+    async with httpx.AsyncClient(timeout=30) as http:
+        r = await http.post(
+            "https://api.sarvam.ai/speech-to-text",
+            headers={"api-subscription-key": SARVAM_API_KEY},
+            files={"file": (filename or "audio.wav", file_bytes, content_type or "application/octet-stream")},
+            data={"model": "saaras:v3", "mode": "codemix"},
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"Sarvam HTTP {r.status_code}: {r.text[:200]}")
+    return (r.json().get("transcript") or "").strip()
+
+
+async def stt_whisper(file_bytes: bytes, filename: str) -> str:
+    kwargs: Dict[str, Any] = dict(
+        file=(filename or "audio.m4a", file_bytes),
+        model="whisper-large-v3",
+        temperature=0,
+        response_format="json",
+        prompt=WHISPER_PROMPT,
+    )
+    if WHISPER_LANG:
+        kwargs["language"] = WHISPER_LANG
+    res = await client.audio.transcriptions.create(**kwargs)
+    return (getattr(res, "text", "") or "").strip()
+
+
+async def transcribe_with(engine: str, file_bytes: bytes, filename: str, content_type: str, user_id: str) -> str:
+    if engine == "deepgram":
+        return await stt_deepgram(file_bytes, user_id)
+    if engine == "sarvam":
+        return await stt_sarvam(file_bytes, filename, content_type)
+    if engine == "whisper":
+        return await stt_whisper(file_bytes, filename)
+    raise RuntimeError(f"Unknown STT engine: {engine}")
+
+
+async def run_stt(engine: str, file_bytes: bytes, filename: str, content_type: str, user_id: str):
+    """Returns (text, engine_used, compare_dict)."""
+    if engine != "all":
+        text = await transcribe_with(engine, file_bytes, filename, content_type, user_id)
+        return text, engine, {}
+
+    ready = [e for e in STT_ENGINES if engine_ready(e)]
+
+    async def one(e: str):
+        try:
+            return e, await transcribe_with(e, file_bytes, filename, content_type, user_id)
+        except Exception as ex:
+            return e, f"[ERROR] {str(ex)[:150]}"
+
+    compare = dict(await asyncio.gather(*[one(e) for e in ready]))
+    for e in ("sarvam", "whisper", "deepgram"):
+        t = compare.get(e, "")
+        if t and not t.startswith("[ERROR]"):
+            return t, e, compare
+    return "", "all", compare
+
 
 @app.post("/process_voice", dependencies=[Depends(verify_api_key)])
 async def process_voice(
@@ -1102,13 +1239,19 @@ async def process_voice(
     target_language: str = Form("English"),
     user_id: str = Form("default_user_1"),
     is_premium: bool = Form(False),
-    mode: str = Form("translate")  # 🟢 NEW PARAMETER
+    mode: str = Form("translate"),
+    engine: str = Form(""),  # optional: deepgram | sarvam | whisper | all
 ):
     if client is None:
         return {"result": "", "error": "GROQ_API_KEY is not configured."}
 
-    if deepgram_client is None:
-        return {"result": "", "error": "DEEPGRAM_API_KEY is not configured."}
+    chosen = pick_engine(engine)
+    if chosen == "all":
+        if not any(engine_ready(e) for e in STT_ENGINES):
+            return {"result": "", "error": "No speech engine is configured."}
+    elif not engine_ready(chosen):
+        needed = {"deepgram": "DEEPGRAM_API_KEY", "sarvam": "SARVAM_API_KEY", "whisper": "GROQ_API_KEY"}[chosen]
+        return {"result": "", "error": f"{needed} is not configured."}
 
     # 🛡️ SECURITY NET FOR VOICE (Hacker Protection)
     if not is_premium:
@@ -1121,31 +1264,25 @@ async def process_voice(
             }
 
     try:
-        # STEP 1: TRANSCRIBE THE AUDIO USING DEEPGRAM NOVA-3
         file_bytes = await audio_file.read()
 
         # ============================================================
         # SERVER-SIDE AUDIO DURATION SAFETY CHECK
         # ============================================================
-
         audio_duration = await run_in_threadpool(
             get_audio_duration,
             file_bytes,
             audio_file.filename or "audio"
         )
 
-        # Fail closed:
-        # If server cannot determine duration, DO NOT send audio to Deepgram.
+        # Fail closed: if the duration is unknown, do NOT send audio to any engine.
         if audio_duration is None:
             return {
                 "result": "",
                 "error": "Could not verify audio duration."
             }
 
-        print(
-            f"VOICE AUDIO | user={user_id} | "
-            f"duration={audio_duration:.2f}s"
-        )
+        print(f"VOICE AUDIO | user={user_id} | duration={audio_duration:.2f}s")
 
         # Dynamic duration check: 21s for transcribe, 11s for translate
         max_allowed_duration = 21.0 if mode == "transcribe" else 11.0
@@ -1157,43 +1294,27 @@ async def process_voice(
                 "duration_limit": max_allowed_duration
             }
 
-        source = {"buffer": file_bytes}
-        options = PreRecordedOptions(
-            model="nova-3",
-            smart_format=True,
-            language="multi",
-            keyterm=[
-                "Mundra",
-                "Nhava Sheva",
-                "JNPT",
-                "Kandla",
-                "Chennai",
-                "Mumbai",
-                "Pipavav",
-                "Cochin",
-                "Maersk",
-                "MSC",
-                "Hapag-Lloyd",
-                "CMA CGM",
-                "COSCO",
-                "Excel",
-                "invoice",
-                "shipment",
-                "container",
-                "freight",
-                "GST",
-                "accounting"
-            ]
+        # STEP 1: SPEECH -> TEXT (selected engine)
+        transcribed_text, engine_used, compare = await run_stt(
+            chosen,
+            file_bytes,
+            audio_file.filename or "audio",
+            audio_file.content_type or "",
+            user_id,
         )
-        transcription = await deepgram_client.listen.asyncrest.v("1").transcribe_file(
-            source, options
-        )
-        transcribed_text = transcription.results.channels[0].alternatives[0].transcript.strip()
+
+        print(f"STT RAW | engine={engine_used} | {transcribed_text!r}")
+        if compare:
+            for name, text in compare.items():
+                print(f"STT COMPARE | {name}: {text!r}")
 
         if not transcribed_text:
-            return {"result": "", "error": "Could not hear any speech."}
+            out = {"result": "", "error": "Could not hear any speech.", "engine_used": engine_used}
+            if compare:
+                out["compare"] = compare
+            return out
 
-        # STEP 2: SELECT SYSTEM PROMPT BASED ON MODE
+        # STEP 2: CLEAN-UP / TRANSLATION
         if mode == "transcribe":
             system_prompt = build_transcribe_system_prompt()
             user_content = f"Here is the dictated speech to clean up (keep original language, DO NOT translate, remove self-corrections, and format 3+ listed items/bugs into bullet points on new lines):\n\n{transcribed_text}"
@@ -1209,11 +1330,14 @@ async def process_voice(
         completion = await client.chat.completions.create(
             model=HEAVY_MODEL,
             messages=messages,
-            temperature=0.25,
+            # Transcribe mode must not rephrase: temperature 0.
+            temperature=0.0 if mode == "transcribe" else 0.15,
         )
 
         raw = completion.choices[0].message.content or ""
         final_text = clean_output(raw)
+
+        print(f"STT FINAL | {final_text!r}")
 
         if not final_text:
             return {"result": "", "error": "AI returned empty result.", "transcribed_text": transcribed_text}
@@ -1222,13 +1346,17 @@ async def process_voice(
         if not is_premium:
             await run_in_threadpool(increment_today_usage, user_id)
 
-        print(f"VOICE REQUEST | user={user_id} | mode={mode} | lang={target_language} | model=deepgram-nova-3 -> {HEAVY_MODEL}")
+        print(f"VOICE REQUEST | user={user_id} | mode={mode} | lang={target_language} | engine={engine_used} -> {HEAVY_MODEL}")
 
-        return {
+        response = {
             "result": final_text,
             "transcribed_text": transcribed_text,
-            "model_used": f"deepgram-nova-3 + {HEAVY_MODEL}"
+            "engine_used": engine_used,
+            "model_used": f"{engine_used} + {HEAVY_MODEL}",
         }
+        if compare:
+            response["compare"] = compare
+        return response
 
     except Exception as e:
         print("VOICE ERROR:", str(e))
