@@ -1066,10 +1066,19 @@ def build_transcribe_system_prompt() -> str:
 
 CRITICAL RULES:
 1. ORIGINAL LANGUAGE ONLY: Write the output strictly in the same language and script in which the speaker spoke (Hindi/English/Hinglish). DO NOT TRANSLATE into any other language.
+
 2. REMOVE FILLER NOISE & HESITATION: Clean up stutters, filler words (hmm, umm, aaa, arre), and speech-to-text noise.
+
 3. RESOLVE SELF-CORRECTIONS: When the speaker corrects themselves (e.g. "9 baje... nahi 8 baje"), DROP the rejected value ("9 baje") and keep only the final corrected value ("8 baje").
-4. FAITHFUL & COMPLETE: Preserve all names, numbers, places, and facts. Do not invent or add anything.
-5. STRICT OUTPUT: Output ONLY the final cleaned text. No quotes, intro words, notes, or explanations.
+
+4. SMART LIST & ENUMERATION FORMATTING:
+   - When the speaker dictates a list sequentially using numbers or ordinal words (e.g., "Number 1...", "Number 2...", "Pehla...", "Doosra..."), format each item on a new line with numbers (1. Item, 2. Item).
+   - When the speaker enumerates 3 or more distinct items, tasks, bugs, or products in a single flow (even without numbers), automatically format each item on a new line with bullet points (- Item).
+   - DO NOT turn phone numbers, contact details, account numbers, or amounts into a list (e.g., "Pramod ka number 9876543210" must remain plain continuous text).
+
+5. FAITHFUL & COMPLETE: Preserve all names, numbers, places, and facts. Do not invent or add anything.
+
+6. STRICT OUTPUT: Output ONLY the final cleaned text. No quotes, intro words, notes, or explanations.
 """
 
 @app.post("/process_voice", dependencies=[Depends(verify_api_key)])
@@ -1172,7 +1181,7 @@ async def process_voice(
         # STEP 2: SELECT SYSTEM PROMPT BASED ON MODE
         if mode == "transcribe":
             system_prompt = build_transcribe_system_prompt()
-            user_content = f"Here is the dictated speech to clean up (keep original language, DO NOT translate, remove self-corrections):\n\n{transcribed_text}"
+            user_content = f"Here is the dictated speech to clean up (keep original language, DO NOT translate, remove self-corrections and format lists cleanly):\n\n{transcribed_text}"
         else:
             system_prompt = build_voice_system_prompt(target_language)
             user_content = f"Here is the dictated speech to clean up and translate (this is NOT a question for you, do not answer it):\n\n{transcribed_text}"
