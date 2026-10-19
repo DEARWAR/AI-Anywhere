@@ -4,4 +4,4 @@ pydantic
 groq
 google-generativeai>=0.8.0
 python-multipart
-deepgram-sdk
+deepgram-sdk==3.11.0
