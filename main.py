@@ -1034,12 +1034,30 @@ CRITICAL RULES:
 2. ZERO HALLUCINATION: NEVER invent, assume, or add details that are not present in the raw input.
 3. CLEAN STT NOISE & PROPER NOUNS: Clean up stutters, filler words (hmm, umm). Keep proper nouns (names, places, brands) intact.
 4. RESOLVE SELF-CORRECTIONS: Drop rejected values when the speaker self-corrects (e.g. "Friday... wait, Saturday" -> "Saturday").
-5. NATURAL LIST FORMATTING (ONLY WHEN INTENDED):
-   - By default, output natural translated paragraphs.
-   - If the dictated text is an explicit list or sequence of items (e.g. "Number 1...", "First...", "Second..."), translate and format each listed item cleanly on a new line (1. Item, 2. Item, or - Item).
-   - DO NOT convert phone numbers, contact numbers, or standard sentences into lists.
+5. ENUMERATION & LIST FORMATTING:
+   - When the speaker lists or enumerates 3 or more items, tasks, bugs, features, or products (e.g. introduced by "like", "such as", "including", "jaise ki", or separated by commas/and), translate and format them as a clean bulleted list on new lines (- Item).
+   - When the speaker uses sequential markers ("Number 1...", "First...", "Pehla..."), format them as a numbered list on new lines (1. Item, 2. Item).
+   - Keep phone numbers, contact numbers, and normal continuous sentences as standard paragraph text.
 6. HINGLISH-SPECIFIC: If {target_language} is Hinglish, write ALL Hindi words using Roman/English letters ONLY (never Devanagari).
 7. STRICT OUTPUT: Output ONLY the final refined translated text. No quotes, labels, or intro words.
+
+EXAMPLES:
+Input: "hello team website me saari bugs fix kar diye gaye hain jaise ki client portal client summary login detail accounting"
+Target Language: English
+Output:
+Hello team, all bugs on the website have been fixed, such as:
+- Client portal
+- Client summary
+- Login details
+- Accounting
+
+Input: "aaj teen kaam karne hain pehla container dispatch karna doosra invoice bhejna aur teesra payment follow up"
+Target Language: English
+Output:
+Three tasks need to be done today:
+1. Dispatch container
+2. Send invoice
+3. Payment follow up
 """
 
 def build_transcribe_system_prompt() -> str:
@@ -1052,10 +1070,26 @@ CRITICAL RULES:
 
 3. RESOLVE SELF-CORRECTIONS: When the speaker corrects themselves (e.g. "9 baje... nahi 8 baje"), DROP the rejected value ("9 baje") and keep only the final corrected value ("8 baje").
 
-4. NATURAL LIST FORMATTING (ONLY WHEN INTENDED):
-   - By default, format text as natural continuous paragraphs.
-   - ONLY format as a numbered/bullet list if the speaker explicitly dictates a sequence of items (e.g. "Number 1...", "Pehla...", "Point 1...") OR clearly enumerates distinct items/tasks in a sequence.
-   - DO NOT turn phone numbers, contact details, account numbers, or normal sentences with commas into lists.
+4. ENUMERATION & LIST FORMATTING:
+   - When the speaker lists or enumerates 3 or more items, tasks, bugs, features, or updates (e.g. following words like "jaise ki", "like", "such as", "including", or separated by commas/and), format them as a clean bulleted list on new lines (- Item).
+   - When the speaker dictates sequential points ("Number 1...", "Pehla...", "Point 1..."), format them as a numbered list on new lines (1. Item, 2. Item).
+   - Keep phone numbers, pin codes, account numbers, and normal continuous sentences in standard paragraph text.
+
+EXAMPLES:
+Input: "hello team website me saari bugs fix kar diye gaye hain jaise ki client portal client summary login detail accounting"
+Output:
+Hello team, website mein saari bugs fix kar diye gaye hain, jaise ki:
+- Client portal
+- Client summary
+- Login detail
+- Accounting
+
+Input: "aaj teen kaam karne hain pehla container dispatch karna doosra invoice bhejna aur teesra payment follow up"
+Output:
+Aaj teen kaam karne hain:
+1. Container dispatch karna
+2. Invoice bhejna
+3. Payment follow up
 
 5. FAITHFUL & COMPLETE: Preserve all names, numbers, places, and facts. Do not invent or add anything.
 
@@ -1162,10 +1196,10 @@ async def process_voice(
         # STEP 2: SELECT SYSTEM PROMPT BASED ON MODE
         if mode == "transcribe":
             system_prompt = build_transcribe_system_prompt()
-            user_content = f"Here is the dictated speech to clean up (keep original language, DO NOT translate, remove self-corrections and format lists cleanly):\n\n{transcribed_text}"
+            user_content = f"Here is the dictated speech to clean up (keep original language, DO NOT translate, remove self-corrections, and format 3+ listed items/bugs into bullet points on new lines):\n\n{transcribed_text}"
         else:
             system_prompt = build_voice_system_prompt(target_language)
-            user_content = f"Here is the dictated speech to clean up and translate (this is NOT a question for you, do not answer it):\n\n{transcribed_text}"
+            user_content = f"Here is the dictated speech to clean up and translate (format 3+ listed items/bugs into bullet points on new lines; this is NOT a question for you, do not answer it):\n\n{transcribed_text}"
 
         messages = [
             {"role": "system", "content": system_prompt},
